@@ -36,4 +36,8 @@ Compare protected elements with the source, review text at original resolution a
 
 ## Distribution status
 
-Initial distribution of the locally developed skill. Cross-agent and cross-platform compatibility has not been validated. No license grant is included in this release; obtain permission from the repository owner before redistribution or modification beyond rights otherwise provided by law or the hosting service.
+Initial distribution of the locally developed skill. Cross-agent and cross-platform compatibility has not been validated.
+
+## License
+
+This skill and its included helper scripts are licensed under the [MIT License](LICENSE). PhotoCraft and other external dependencies retain their own licenses.
