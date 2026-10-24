@@ -10,7 +10,8 @@ Build contact sheets for the current output set and inspect both the whole batch
 - unevenly distributed columns;
 - long translations leaving their intended cell;
 - repeated supporting text that is too small or low contrast;
-- repeated repair seams, residual glyphs, or opaque patches.
+- repeated repair seams, residual glyphs, or opaque patches;
+- solid-color repair patches on gradient or textured backgrounds (visible rectangles) — use locally sampled gradient fills with feathered edges only on smooth gradient backgrounds. On textured artwork, use texture-matched repair and preserve contours; report a limitation if natural reconstruction is unavailable.
 
 When one pattern is confirmed, scan every image in the approved batch for that pattern. Do not assume that fixing the example image closes the batch issue.
 
@@ -31,6 +32,6 @@ Give each worker a disjoint file list and the same acceptance criteria. Concurre
 
 1. verifies all new PNG/PCraft pairs and dimensions;
 2. reviews combined contact sheets for cross-worker consistency;
-3. opens questionable outputs at original size;
+3. opens questionable outputs at original size (crop-zoomed to ≥100% — the capped render preview is not original size);
 4. requests focused repair when a shared rule is still violated;
 5. deletes old variants only after every replacement in that cleanup set passes.
