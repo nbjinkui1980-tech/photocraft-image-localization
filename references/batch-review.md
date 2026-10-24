@@ -28,10 +28,10 @@ Do not propagate a correction to unrelated designs or change approved wording un
 
 ## Multi-agent handoff
 
-Give each worker a disjoint file list and the same acceptance criteria. Concurrent PhotoCraft editing additionally requires verified independent sessions; otherwise one owner serializes editing while workers analyze images. Workers report problem images and untouched images separately. The lead agent then:
+Give each worker a disjoint file list, confirmed terminology and the same layout/acceptance criteria. One lead owns the task JSON; workers return their assigned item updates without concurrently rewriting the shared manifest. Track file hashes so resumed tasks reuse only still-valid reviews. Concurrent PhotoCraft editing additionally requires verified independent sessions; otherwise one owner serializes editing while workers analyze images. Workers report problem images and untouched images separately. The lead agent then:
 
-1. verifies all new PNG/PCraft pairs and dimensions;
+1. verifies all new PNG/PCraft pairs and dimensions, then runs native-size source comparison with each item’s declared regions;
 2. reviews combined contact sheets for cross-worker consistency;
 3. opens questionable outputs at original size (crop-zoomed to ≥100% — the capped render preview is not original size);
 4. requests focused repair when a shared rule is still violated;
-5. deletes old variants only after every replacement in that cleanup set passes.
+5. passes `compare_source.py --check`, records file-bound review hashes and deletes exact old variants only after every replacement in that cleanup set passes.

@@ -12,7 +12,11 @@ def walk(layers, parent_visible=True, ancestry=()):
         if content.get('kind') == 'text':
             yield {'id': layer.get('id'), 'name': layer.get('name'), 'parents': ancestry,
                    'visible': bool(visible), 'text': content.get('text', ''),
-                   'transform': content.get('transform'), 'shape': content.get('shape')}
+                   'transform': content.get('transform'), 'shape': content.get('shape'),
+                   'font_family': content.get('font_family'), 'size_pt': content.get('size_pt'),
+                   'color': content.get('color'), 'runs': content.get('runs', []),
+                   'paragraphs': content.get('paragraphs', []),
+                   'orientation': content.get('orientation'), 'warp': content.get('warp')}
         children = content.get('children', layer.get('children', [])) or []
         yield from walk(children, visible, (*ancestry, layer.get('id')))
 

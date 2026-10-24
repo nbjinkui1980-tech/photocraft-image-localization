@@ -25,10 +25,13 @@ Multiple agents are optional and require explicit user instruction. Concurrent e
 
 ## Helpers
 
-- `python3 scripts/extract_pcraft_text.py DOCUMENT.pcraft`: JSONL editable text with layer IDs, visibility, and transforms. Hidden layers are omitted by default.
+- `python3 scripts/extract_pcraft_text.py DOCUMENT.pcraft`: JSONL editable text with layer IDs, visibility flags, styles, paragraphs, and transforms. Hidden layers are omitted by default.
 - `swift scripts/contact_sheets.swift REVIEW_DIR IMAGE.png ...`: review sheets, with failure reporting.
 - `python3 scripts/verify_outputs.py SOURCE_DIR OUTPUT_DIR --suffix=-en-v2 IMAGE_BASE`: archive and dimension verification. This does not replace editor reopen or visual review.
-- See `references/output-cleanup.md` for exact-list cleanup. Cleanup previews by default and deletes only with `--delete` after authorized verification.
+- See `references/batch-production.md` for clean-background reuse across languages and `batch_verify.py` for compact, resumable checks of saved candidates.
+- See `references/task-state.md` for task records, pre-repair protection and per-line geometry checks using `check_layout.py`.
+- See `references/source-comparison.md` for native-size difference reports and `compare_source.py --check`, required before delivery and old-version deletion. This requires macOS/Swift and recorded visual review of editable regions.
+- See `references/output-cleanup.md` for exact-list cleanup. Cleanup previews by default and deletes only with `--delete` after authorized verification and matching review hashes. Older manifests must gain current source-comparison evidence and be reviewed/fingerprinted before deletion.
 
 ## Review boundaries
 

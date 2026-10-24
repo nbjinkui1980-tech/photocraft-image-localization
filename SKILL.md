@@ -5,48 +5,58 @@ description: Translate or revise text in local images with Codex vision and Phot
 
 # PhotoCraft image localization
 
-Use Codex to read and translate images and PhotoCraft MCP to edit them. PhotoCraft is the editor, not the OCR or translation model. Do not call an external translation service or image generation model unless the user requests it.
+Use Codex for image understanding and translation, and PhotoCraft MCP for editing. Honor existing authorization for external translation services or image-model repair; otherwise do not invoke them.
 
-## Choose the requested mode
+## Select the requested scope
 
-- **Translate:** localize source images into a target language.
-- **Back-check:** pair visible source phrases with current translations and classify each as accurate, needs polishing, mistranslated, missing, or uncertain.
-- **Layout review:** inspect current outputs for typography, alignment, contrast, spacing, overflow, and occlusion; edit only images with visible problems.
-- **Revise and replace:** create a verified new version, then remove prior related outputs only when the user explicitly requests deletion.
+- **Review / back-check:** read images and text, pair source and target phrases, and report accurate, polish-only, mistranslated, missing, or uncertain items. Do not modify image files.
+- **Layout repair:** preserve confirmed wording, brands, numbers, and artwork; adjust the affected typography and geometry. Line breaks and approved casing may change.
+- **Translation / content revision:** verify meaning and terminology, then reflow the affected text. Do not rewrite unrelated approved phrases.
+- **Revise and replace:** verify new outputs, then remove exact old variants only when deletion is authorized.
 
-## Target language
+Apply corrections across matching structures in the approved batch. Keep isolated-image requests limited to that image. Recheck changed areas and dependent groups after each revision; do not restart all work after a small adjustment.
 
-Support the language or locale specified by the user, including multiple targets when requested. Use one output set and terminology table per target, with a language tag such as `en`, `vi`, `th`, `ja`, or `ar`. Do not assume Vietnamese. Preserve accents, select fonts that support the actual script, and preview shaping and reading direction for RTL or complex scripts. If the available renderer cannot render the script correctly, report that limitation instead of exporting a known-broken result. Follow the user's terminology preference; English material names are an option, not a universal default.
+## Target language and font preflight
 
-## Shared workflow
+Use the user's language or locale, one output set and terminology table per target (`en`, `vi`, `th`, `ja`, `ar`, etc.). English material names are a task preference, not a universal default. For ambiguous text or claims, preserve uncertainty; do not invent product functions or formal brand spellings. Read [translation-policy](references/translation-policy.md).
 
-1. Enumerate source images, target language, current output variants, and the exact requested scope. Inspect each relevant image at original resolution.
-2. Before editing, build a source-to-target ledger for every clear phrase and a protected-elements ledger for logos, brand marks, product identifiers, numbers, units, standards, icons, and required original-language marks. Preserve claim strength. Mark uncertain text instead of inventing it. For terminology and report-image rules, read [references/translation-policy.md](references/translation-policy.md).
-3. Open the source or newest editable `.pcraft` with PhotoCraft. Discover current commands with `command_list`; do not rely on remembered command identifiers or parameters.
-4. Preserve the original image. For raster text removal, use tight glyph-shaped selections and content-aware repair. Prefer a sampled background fill on flat areas. Use modest feathering or blur only on already smooth backgrounds. Do not hide damage with an opaque panel or redraw a large background region.
-5. Add or update editable text layers. Match the original hierarchy while adapting the layout to the target language. Repeated labels, rows, columns, and cards must use a shared grid and shared typography rather than independent placements. Read [references/layout-review.md](references/layout-review.md) when text length or typography is part of the task. After creating or resizing a text layer, intersect the bounds returned by `type.create` (or `type.info`) with the protected-elements ledger boxes; report any overlap instead of shipping it.
-6. Run content review before visual review. At original size, check protected elements, residual glyphs, repair seams, missing or wrong text, font fallback, hierarchy, alignment, line spacing, contrast, margins, overflow, and overlap. Correct visible defects before continuing. Verify every repair patch at ≥100% zoom before saving: when the render preview is smaller than the canvas, duplicate and crop to each repair site. A reduced full-frame preview cannot reveal patch seams or subtle tone mismatches. Any repair applied after a review resets that image's review status — re-review the changed areas at ≥100%. Before repairing a defect, zoom into the source and record the defect's exact bounding box; after repairing, compare before and after across that same region at a verified pixel scale. Treat grid samples and scan results as supporting evidence only. Never verify a repair with a few point samples or a full-frame preview — point samples land on clean pixels beside the defect, and small-crop previews are rescaled in ways that can both invent phantom artifacts and hide real ones.
-7. Save a distinct `.pcraft` and `.png`. Verify that both are non-empty and that the PNG dimensions match the source. Report failures individually; never silently skip an image.
+Before batch editing, render representative **actual target phrases** containing accents, non-Latin characters, numbers, and mixed English terms in a scratch document. Inspect missing-font warnings, partial glyph fallback, mark placement, and any RTL joining or direction. Font-family equality alone is not proof of consistent rendering. Use one supported style per role; if rendering is unsupported, report the limitation rather than export known-broken text. Do not claim untested languages are verified.
 
-## Batch and multi-agent work
+## Prepare and edit
 
-Use multiple agents only when the user explicitly requests them. Assign disjoint image ranges and exclusive file ownership. Confirm each worker has an independent PhotoCraft session before concurrent editing. File ownership alone does not isolate the active document. If session isolation is unavailable or unknown, parallelize analysis only and serialize all PhotoCraft edit/select/save sequences through one owner. Workers must not delete shared old outputs. The lead agent performs merged visual review, mechanical verification, and authorized cleanup.
+1. Enumerate original sources, current variants, target languages, and affected images. Record source phrases, confirmed translations, protected regions, layer IDs, and current outputs in one task JSON using [task-state](references/task-state.md). Reuse the current entries on resume and invalidate reviews when file hashes change.
+2. Verify source meaning, units, names, and claim strength **before** expensive background repair. Define cells, guides, styles, and viewing-size requirements for repeated structures. Trial-render long translations on a scratch copy. Validate one representative per recurring layout, then apply its rules without reusing unrelated image coordinates. Agent checks suffice unless genuine ambiguity requires user input.
+3. Discover relevant PhotoCraft commands and allowed read/write roots once per session; refresh after a relevant error or capability change. Keep document identity explicit. Separate fixed action replay from MCP `command_batch`: each MCP step can have different parameters. Batch already-planned edits on one document; inspect each result. Batches are not atomic: keep successful earlier steps and resume from the failure after inspecting state, never blindly replay the whole batch.
+4. Before selection expansion, fill, blur, clone, or other raster repair, check its full effect region against the protected regions. Run `check_layout.py --phase pre-repair` for declared rectangular extents; narrow the operation if it intersects protection. Keep source pixels available for recovery. Avoid whole-image repainting, opaque cover panels, and blur on detailed texture. Use gradients only on smooth gradient backgrounds.
+5. Verify the cleaned background locally before adding text. Edit or create editable text layers. Apply shared styles, cell geometry, and per-line alignment from [layout-review](references/layout-review.md). Wrap first, adjust layout second, and reduce shared size only while still readable. Do not independently shrink a long field to force a fit.
+6. Save a uniquely named working PCraft and collect current `type.info` results for the checked text groups. Bind the snapshot to that saved file's hash and run `check_layout.py` as documented in [task-state](references/task-state.md). Also inspect uncovered text and protected pixels visually; the geometry tool does not assess the entire raster image.
+7. Export a pending candidate PNG and run the original-size region comparison and delivery gate in [source-comparison](references/source-comparison.md). Inspect unexpected changes and every editable region, then reopen the saved PCraft and review the actual deliverables. Use a full-frame preview for composition, verified 1:1 crops for repairs and brand details, and intended display size for readability. After repairs, repeat review of affected regions and dependent groups. Report failed or unrepairable images individually.
 
-For batch review, read [references/batch-review.md](references/batch-review.md). When one image reveals a repeatable defect, inspect every image in the approved batch for the same pattern. A user correction to an example image becomes an acceptance criterion for matching structures in that batch, while unrelated images and content remain out of scope.
+## Batch production
 
-PhotoCraft action batches replay identical coordinates and parameters. For varied images, inspect and place text image by image rather than applying one coordinate set to the whole batch.
+For multiple images or target languages, read [batch-production](references/batch-production.md). Prepare session capabilities once, and cache font checks only for matching language/font/render settings. Validate one clean-background PCraft per original and duplicate it for each language; keep the original as the final comparison baseline. Plan complete per-image text edits before MCP batches, retain full results locally, and return short summaries plus necessary previews. Reuse unchanged evidence and resume only stale/pending stages; never skip each final image's visual review.
 
-## Output replacement
+Use `batch_verify.py` after candidate export and type-info collection to chain integrity, clean-base, plan, geometry and pixel checks. It does not perform MCP editing or visual approval. In production mode, bind candidate and reviewed plans with `candidate_plan_sha256` and `review_plan_sha256` as described in the reference. Both adaptation and production modes use the same delivery/cleanup standards.
 
-When deletion is authorized, first create a new uniquely named version. Delete an older variant only after its replacement PNG and PCraft exist, are non-empty, match source dimensions, and pass visual review. Reopen each saved PCraft in PhotoCraft and confirm its editable layers and rendered appearance before authorizing cleanup. Preserve source images and unaffected outputs. After cleanup, confirm every source still has one current PNG and one current PCraft.
+## Batch coordination
 
-Reusable helpers are in `scripts/`:
+Read [batch-review](references/batch-review.md) for repeated defects. Use multiple agents only when explicitly requested. Assign disjoint files and the same layout/terminology criteria. Concurrent PhotoCraft editing requires verified independent sessions. Otherwise parallelize analysis only and serialize all document select/edit/save sequences through one owner. Workers never delete shared old outputs.
 
-- `extract_pcraft_text.py`: extract editable text from PCraft manifests.
-- `contact_sheets.swift`: build review sheets from PNG files.
-- `verify_outputs.py`: check pairs and dimensions with macOS `sips`.
-- `diff_scan.swift`: flag small-but-consistent tone-mismatch cells (patch seams) between source and output; large text-edit diffs are counted only. Effective only on flat solid or light-gradient backgrounds; it cannot isolate residual glyphs or smears inside text-edit zones, and loses selectivity on low-contrast or textured art — there, ≥100% zoomed human review is the only reliable check.
-- `find_dark.swift`: scan a rect for pixels below a luminance threshold and print their bbox plus an ASCII map. Use only to locate pixels below the selected threshold in a valid, fully in-bounds region. It reports scanned pixel count and rejects empty or out-of-bounds regions. Zero matches cannot prove absence of residual text: faint, colored, or light glyphs may be missed and legitimate artwork may match. There is no light-pixel mode; inspect light text visually.
-- `cleanup_versions.py`: list old variants by default; deletion requires explicit `--delete`.
+The lead checks cross-image consistency and actual saved outputs. Do not accept a collage alone as proof of original-size repair quality or legible mobile text.
 
-For exact-list cleanup usage and required evidence, read [references/output-cleanup.md](references/output-cleanup.md). Integrity scripts do not certify visual quality or renderer compatibility.
+## Verify and replace
+
+Require a passing `compare_source.py --check` for each image before marking it delivered or publishing its candidate files. A missing, failed or stale comparison blocks acceptance and old-version deletion. Candidate export is necessary for the check and is not delivery. Use `verify_outputs.py` for archive/dimension checks, and `--hashes` to capture source/PNG/PCraft fingerprints before and after review. Only record passed review against identical bytes. File changes invalidate the prior review automatically at cleanup. Read [output-cleanup](references/output-cleanup.md) for exact filenames and hash-bound deletion. Preserve originals, unaffected variants, and other target languages.
+
+Helpers in `scripts/`:
+
+- `batch_verify.py`: compact per-item verification summary, validated pixel-report reuse, and continuation after individual failures.
+- `extract_pcraft_text.py`: JSONL text, visibility flags, style runs, transforms and paragraphs; not a rendered-visibility guarantee.
+- `check_layout.py`: declared cell/style/per-line alignment, collision and pre-repair protection checks. Requires current PhotoCraft evidence for final layout checks.
+- `compare_source.py` / `compare_pixels.swift`: full-resolution protected/unchanged-region checks, difference reports/images and a delivery gate tied to file hashes and region policy. Editable-region quality still requires visual review.
+- `contact_sheets.swift`: batch composition previews. Use fresh review directories to avoid stale sheets.
+- `verify_outputs.py`, `cleanup_versions.py`: integrity checks, fingerprints, and explicit-list cleanup (dry run by default).
+- `diff_scan.swift`: downsampled tone-difference hints on smooth backgrounds; not proof of a clean repair.
+- `find_dark.swift`: below-threshold pixel counts in a valid region. Zero matches cannot rule out faint, colored or light residual text; legitimate art can also match. No light-pixel mode is provided.
+
+Run `python3 scripts/test_workflow.py` for layout/cleanup regressions, `python3 scripts/test_source_comparison.py` for original-comparison/delivery regressions, and `python3 scripts/test_scans.py` for scan regressions when those helpers change. Image dimensions and Swift helpers currently require macOS. Do not equate script success with translation, visual, or cross-platform acceptance.
