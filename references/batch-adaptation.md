@@ -16,7 +16,7 @@ not assume it: some outputs re-render the background (a lighter gradient, a grad
 replaced photo) and will fail the source comparison across the whole canvas by design.
 
 ```sh
-swift scripts/classify_baseline.swift SOURCE CANDIDATE
+python3 scripts/swift_tool.py classify_baseline SOURCE CANDIDATE
 ```
 
 It grid-samples both images and reports the median per-channel difference and the
@@ -37,13 +37,16 @@ error-prone: a repair feather or antialias rim 1–4 px outside a hand-drawn mas
 the gate as "unexpected pixels". Derive the mask from the change footprint instead:
 
 ```sh
-swift scripts/repairmap.swift SOURCE V1PNG TOL MIN_AREA DILATE   # per-fragment rects + baseline stats
-python3 scripts/cluster_rects.py REPAIRMAP.json --gap 40 --margin 6 --width W --height H
+python3 scripts/swift_tool.py repairmap SOURCE V1PNG TOL MIN_AREA DILATE   # per-fragment rects + baseline stats
+python3 scripts/cluster_rects.py REPAIRMAP.json --gap 40 --margin 6   # canvas size read from REPAIRMAP.json
 ```
 
 - `repairmap` diffs source vs the existing output and emits connected-component rects
-  of the changed footprint (removed source text + localized text + repair).
-- `cluster_rects` merges fragments into per-text-group boxes. Text over a **clean**
+  of the changed footprint (removed source text + localized text + repair), plus the
+  canvas `width`/`height`. Its pixel decoding matches `compare_pixels.swift`, including alpha.
+- `cluster_rects` grows each rect by `--margin`, then merges boxes whose edges are at most
+  `--gap` px apart on both axes. Pass `--width/--height` for older repairmap files without
+  canvas size; the helper refuses to guess it. Text over a **clean**
   background yields a few group boxes. Text over a **photo/texture** fragments into many
   tiny rects; the real editable unit there is the whole inpainted text element, so
   cluster into that element's box — but never let one box reach ~100% of the canvas

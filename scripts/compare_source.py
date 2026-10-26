@@ -7,7 +7,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from verify_outputs import exact_output, image_size, pair_hashes, sha256_file, verify_pair
+import swift_tool
+from verify_outputs import exact_output, image_size, pair_hashes, sha256_file, verification_cache, verify_pair
 
 ENGINE = Path(__file__).with_name('compare_pixels.swift')
 
@@ -110,7 +111,7 @@ def compare(entry, root, engine=None):
         temp = Path(temporary)
         config = {**policy, 'source': str(files[0]), 'output': str(files[1]), 'diff_image': str(temp / 'diff.png')}
         (temp / 'config.json').write_text(json.dumps(config))
-        command = engine if engine is not None else ['swift', str(ENGINE)]
+        command = engine if engine is not None else swift_tool.command('compare_pixels')
         run = subprocess.run([*command, str(temp / 'config.json')], capture_output=True, text=True)
         if run.returncode not in (0, 2):
             raise ValueError(f'pixel comparison failed: {run.stderr.strip()}')
@@ -195,10 +196,12 @@ def main():
             raise ValueError('comparison report cannot overwrite task state')
         root = args.output_dir.resolve(strict=True)
         if args.check:
-            require_delivery(entry, root)
+            with verification_cache():
+                require_delivery(entry, root)
             print('Delivery evidence passed for current bytes and region policy')
         else:
-            result = compare(entry, root)
+            with verification_cache():
+                result = compare(entry, root)
             print(json.dumps({'status': result['status'], 'unexpected_pixels': result['raster']['unexpected_pixels'],
                               'report': entry['comparison']['report'], 'diff_image': result['diff_image']}, ensure_ascii=False))
             if result['status'] == 'fail':

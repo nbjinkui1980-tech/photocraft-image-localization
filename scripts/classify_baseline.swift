@@ -7,50 +7,75 @@
 // Grid-samples both images and reports the median per-channel difference and the
 // fraction of samples above a tolerance. Preserved background: median ~0 and only
 // text-area samples exceed tolerance. Redesigned: high median and most samples differ.
+// Pixels are decoded exactly like compare_pixels.swift (sRGB premultiplied RGBA8).
+// Samples skip a border of up to 30 px (smaller on small images); zero samples is an error.
 //
 // usage: classify_baseline.swift SOURCE CANDIDATE [STEP=60] [TOL=6]
 // prints JSON: {"median":N,"over":N,"total":N,"frac":F,"verdict":"preserved|redesigned"}
 import Foundation
-import AppKit
-
+import CoreGraphics
+import ImageIO
 func fail(_ s: String) -> Never { FileHandle.standardError.write((s+"\n").data(using:.utf8)!); exit(2) }
-struct Img { let w: Int; let h: Int; let stride: Int; let bytes: [UInt8]; let rowBytes: Int }
+// --- shared raster loader: keep identical to compare_pixels.swift raster() ---
+struct Img { let w: Int; let h: Int; let bytes: [UInt8] }
 func load(_ path: String) -> Img {
-    guard let img = NSImage(contentsOfFile: path), let tiff = img.tiffRepresentation,
-          let rep = NSBitmapImageRep(data: tiff), !rep.isPlanar, rep.bitsPerSample == 8,
-          let data = rep.bitmapData else { fail("cannot read \(path)") }
-    let stride = rep.bitsPerPixel / 8
-    return Img(w: rep.pixelsWide, h: rep.pixelsHigh, stride: stride,
-               bytes: Array(UnsafeBufferPointer(start: data, count: rep.bytesPerRow * rep.pixelsHigh)),
-               rowBytes: rep.bytesPerRow)
+    guard let src = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
+          CGImageSourceGetCount(src) == 1 else { fail("unreadable or multi-frame image: \(path)") }
+    let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any]
+    guard ((props?[kCGImagePropertyOrientation] as? NSNumber)?.intValue ?? 1) == 1 else {
+        fail("normalize EXIF orientation in a working copy first: \(path)")
+    }
+    guard let img = CGImageSourceCreateImageAtIndex(src, 0, nil) else { fail("cannot decode image: \(path)") }
+    let w = img.width, h = img.height
+    guard w > 0, h > 0, w <= 50_000_000 / h else { fail("image exceeds the 50-million-pixel scan limit") }
+    guard let space = CGColorSpace(name: CGColorSpace.sRGB) else { fail("sRGB unavailable") }
+    var bytes = [UInt8](repeating: 0, count: w * h * 4)
+    let ok = bytes.withUnsafeMutableBytes { buffer -> Bool in
+        guard let ctx = CGContext(data: buffer.baseAddress, width: w, height: h, bitsPerComponent: 8,
+                                  bytesPerRow: w * 4, space: space,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue)
+        else { return false }
+        ctx.setBlendMode(.copy)
+        ctx.interpolationQuality = .none
+        ctx.draw(img, in: CGRect(x: 0, y: 0, width: w, height: h))
+        return true
+    }
+    guard ok else { fail("cannot allocate raster context") }
+    return Img(w: w, h: h, bytes: bytes)
 }
-@inline(__always) func rgb(_ im: Img, _ x: Int, _ y: Int) -> (Int,Int,Int) {
-    let i = y * im.rowBytes + x * im.stride
-    return (Int(im.bytes[i]), Int(im.bytes[i+1]), Int(im.bytes[i+2]))
+@inline(__always) func delta(_ a: Img, _ b: Img, _ i: Int) -> Int {
+    let o = i * 4
+    var d = 0
+    for c in 0..<4 { d = max(d, abs(Int(a.bytes[o + c]) - Int(b.bytes[o + c]))) }
+    return d
 }
-
+// --- end shared raster loader ---
 let a = CommandLine.arguments
-guard a.count >= 3 else { fail("usage: classify_baseline.swift SOURCE CANDIDATE [STEP] [TOL]") }
-let step = a.count > 3 ? Int(a[3]) ?? 60 : 60
-let tol = a.count > 4 ? Int(a[4]) ?? 6 : 6
+guard (3...5).contains(a.count) else { fail("usage: classify_baseline.swift SOURCE CANDIDATE [STEP] [TOL]") }
+guard let step = a.count > 3 ? Int(a[3]) : 60, step > 0,
+      let tol = a.count > 4 ? Int(a[4]) : 6, (0...254).contains(tol) else {
+    fail("STEP must be a positive integer and TOL an integer in 0...254")
+}
 let im1 = load(a[1]), im2 = load(a[2])
 guard im1.w == im2.w && im1.h == im2.h else { fail("size mismatch") }
+// Border skip shrinks on small images so they are still sampled instead of silently "preserved".
+let marginX = min(30, (im1.w - 1) / 2), marginY = min(30, (im1.h - 1) / 2)
 var diffs: [Int] = []
-var y = 30
-while y < im1.h - 30 {
-    var x = 30
-    while x < im1.w - 30 {
-        let c1 = rgb(im1,x,y), c2 = rgb(im2,x,y)
-        diffs.append(max(abs(c1.0-c2.0), max(abs(c1.1-c2.1), abs(c1.2-c2.2))))
+var y = marginY
+while y < im1.h - marginY {
+    var x = marginX
+    while x < im1.w - marginX {
+        diffs.append(delta(im1, im2, y * im1.w + x))
         x += step
     }
     y += step
 }
-diffs.sort()
 let total = diffs.count
-let median = total > 0 ? diffs[total/2] : 0
+guard total > 0 else { fail("no samples taken; cannot classify") }
+diffs.sort()
+let median = diffs[total/2]
 let over = diffs.filter { $0 > tol }.count
-let frac = total > 0 ? Double(over)/Double(total) : 0
+let frac = Double(over)/Double(total)
 // redesigned when differences are widespread AND not confined to sparse text pixels
 let verdict = (frac > 0.45 && median > tol) ? "redesigned" : "preserved"
 let out: [String: Any] = ["median": median, "over": over, "total": total,

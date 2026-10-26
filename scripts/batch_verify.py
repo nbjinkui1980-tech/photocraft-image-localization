@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """Resume deterministic checks for saved candidates; no editing, approval or deletion."""
 import argparse
-from contextlib import ExitStack
+from concurrent.futures import ThreadPoolExecutor
 import json
+import os
 from pathlib import Path
-import subprocess
 import sys
-import tempfile
 import time
 
 from check_layout import check
-from compare_source import (ENGINE, compare, files_for, production_hash,
+from compare_source import (compare, files_for, production_hash,
                             require_comparison, require_delivery)
-from verify_outputs import image_size, sha256_file
+import swift_tool
+from verify_outputs import image_size, sha256_file, verification_cache
 
 
 def check_clean_base(entry):
@@ -66,22 +66,32 @@ def check_item(entry, root, engine):
         return {'status': 'needs_review', 'pixel_check': pixel_status, 'reason': str(error)}
 
 
-def run_batch(entries, root, engine):
+def run_batch(entries, root, engine, jobs=1):
+    """Check every item; independent items run on up to JOBS threads, rows keep task order."""
     if not isinstance(entries, list) or not entries:
         raise ValueError('expected a nonempty task list')
     names = [e['png'] for e in entries]
     if len(names) != len(set(names)):
         raise ValueError('duplicate candidate PNG names; use distinct language/version names')
-    rows = []
-    for entry in entries:
+    reports = [str(Path(e.get('comparison', {}).get('report', f'missing-{i}')).resolve()) for i, e in enumerate(entries)]
+    if len(reports) != len(set(reports)):
+        jobs = 1  # shared report paths would race on exclusive creation; keep the serial semantics
+
+    def one(entry):
         start = time.monotonic()
         try:
-            result = check_item(entry, root, engine)
+            with verification_cache():
+                result = check_item(entry, root, engine)
         except Exception as error:
             result = {'status': 'failed', 'reason': str(error)}
-        rows.append({'png': entry['png'], 'target_language': entry.get('target_language'),
-                     **result, 'elapsed_seconds': round(time.monotonic() - start, 3)})
-    return rows
+        return {'png': entry['png'], 'target_language': entry.get('target_language'),
+                **result, 'elapsed_seconds': round(time.monotonic() - start, 3)}
+
+    if jobs <= 1 or len(entries) == 1:
+        return [one(entry) for entry in entries]
+    # Work is dominated by the native comparison subprocess and hashing, both outside the GIL.
+    with ThreadPoolExecutor(max_workers=jobs) as pool:
+        return list(pool.map(one, entries))
 
 
 def main():
@@ -89,7 +99,11 @@ def main():
     parser.add_argument('task', type=Path)
     parser.add_argument('output_dir', type=Path)
     parser.add_argument('--summary', required=True, type=Path, help='Fresh .json QA summary path')
+    parser.add_argument('--jobs', type=int, default=min(8, os.cpu_count() or 1),
+                        help='Items checked in parallel (default: min(8, CPU count))')
     args = parser.parse_args()
+    if args.jobs < 1:
+        raise SystemExit('--jobs must be at least 1')
     entries = json.loads(args.task.read_text())
     summary = args.summary.resolve()
     if summary.suffix != '.json' or summary.exists():
@@ -101,22 +115,9 @@ def main():
             if entry.get(key): reserved.add(Path(entry[key]).resolve())
     if summary in reserved:
         raise SystemExit('summary path conflicts with task evidence')
-    with ExitStack() as stack:
-        compiled = None
-
-        def engine():
-            nonlocal compiled
-            if compiled is None:
-                temp = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix='photocraft-batch-')))
-                binary = temp / 'compare-pixels'
-                result = subprocess.run(['swiftc', '-module-cache-path', str(temp / 'modules'),
-                                         str(ENGINE), '-o', str(binary)], capture_output=True, text=True)
-                if result.returncode:
-                    raise ValueError(f'comparison compiler failed: {result.stderr}')
-                compiled = [str(binary)]
-            return compiled
-
-        rows = run_batch(entries, args.output_dir.resolve(strict=True), engine)
+    # Compiled lazily (only when a fresh comparison is needed) and cached across runs.
+    rows = run_batch(entries, args.output_dir.resolve(strict=True),
+                     lambda: swift_tool.command('compare_pixels'), args.jobs)
     summary.parent.mkdir(parents=True, exist_ok=True)
     with summary.open('x') as out:
         json.dump(rows, out, ensure_ascii=False, indent=2)

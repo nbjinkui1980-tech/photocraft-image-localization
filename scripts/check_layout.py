@@ -48,10 +48,19 @@ def cell_for(group, item):
     return left, y0, left + width, y1
 
 
-def check(entry, infos=None, phase='layout'):
-    spec = entry['layout']
-    width, height = map(number, spec['canvas'])
+def check(entry, infos=None, phase='layout', canvas_size=None):
+    # pre-repair only needs the canvas and protection, which exist for photos and single
+    # headlines that carry no layout.groups; take the canvas from the source there and keep
+    # layout.canvas for the geometry phase.
+    if phase == 'pre-repair':
+        if canvas_size is None:
+            width, height = map(number, entry['layout']['canvas'])
+        else:
+            width, height = map(number, canvas_size)
+    else:
+        width, height = map(number, entry['layout']['canvas'])
     canvas = rect([0, 0, width, height])
+    spec = entry.get('layout', {})
     tolerance = number(spec.get('tolerance_px', 2))
     if tolerance < 0:
         raise ValueError('negative tolerance')
@@ -173,10 +182,13 @@ def main():
         source = Path(entry['source'])
         if not source.is_absolute() or sha256_file(source) != entry['source_sha256']:
             raise ValueError('source path/hash changed; refresh protected regions and layout')
-        if list(image_size(source)) != entry['layout']['canvas']:
-            raise ValueError('layout canvas differs from source dimensions')
+        source_size = list(image_size(source))
         infos = None
+        canvas_size = source_size
         if args.phase == 'layout':
+            # The geometry phase needs the declared grid; it must match the source exactly.
+            if source_size != entry['layout']['canvas']:
+                raise ValueError('layout canvas differs from source dimensions')
             pcraft = exact_output(args.output_dir.resolve(strict=True), entry['pcraft'])
             snapshot_path = Path(entry['type_snapshot'])
             if not snapshot_path.is_absolute():
@@ -185,7 +197,10 @@ def main():
             if snapshot['pcraft_sha256'] != sha256_file(pcraft):
                 raise ValueError('stale type.info snapshot; collect again from the saved PCraft')
             infos = snapshot['types']
-        issues = check(entry, infos, args.phase)
+        elif 'layout' in entry and 'canvas' in entry.get('layout', {}) and source_size != entry['layout']['canvas']:
+            # If a canvas is declared anyway, keep it honest.
+            raise ValueError('layout canvas differs from source dimensions')
+        issues = check(entry, infos, args.phase, canvas_size)
         if issues:
             raise ValueError('\n'.join(issues))
         print(f'{args.phase} geometry passed; visual review and protected-pixel comparison still required')

@@ -61,10 +61,10 @@ On resume:
 After MCP has saved candidates and captured current type snapshots, run:
 
 ```sh
-python3 scripts/batch_verify.py TASK.json OUTPUT_DIR --summary=/absolute/work/qa/batch-check-01.json
+python3 scripts/batch_verify.py TASK.json OUTPUT_DIR --summary=/absolute/work/qa/batch-check-01.json --jobs 8
 ```
 
-The helper validates each candidate, optional clean-base evidence and production plan, declared geometry, and original-size pixel preservation. It compiles the Swift comparison helper once per invocation only when a new comparison is needed, using a writable temporary module cache. It reuses only matching successful pixel reports. Each item ends as `ready`, `needs_review`, or `failed`; other items continue after an individual failure. Full details and per-item elapsed seconds go to the summary; console output contains counts and bounded exception descriptions. Exit 0 means all entries are ready; exit 1 means at least one item needs review or failed. Existing summary files are not overwritten.
+The helper validates each candidate, optional clean-base evidence and production plan, declared geometry, and original-size pixel preservation. Items are checked in parallel (`--jobs`, default min(8, CPU count)); rows keep task order. The Swift comparison helper is compiled with `-O` once and cached across runs (`swift_tool.py`), only when a new comparison is needed. It reuses only matching successful pixel reports. Each item ends as `ready`, `needs_review`, or `failed`; other items continue after an individual failure. Full details and per-item elapsed seconds go to the summary; console output contains counts and bounded exception descriptions. Exit 0 means all entries are ready; exit 1 means at least one item needs review or failed. Existing summary files are not overwritten.
 
 It does not translate, edit via MCP, save PCraft, collect type.info, mark visual approval, change the task manifest or delete anything. The agent performs those operations through PhotoCraft, updates genuine evidence, then resumes the same checks. `ready` still relies on recorded visual judgments. Keep cleanup a separate explicit action using the existing exact-list gate.
 

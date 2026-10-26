@@ -198,6 +198,23 @@ class Outputs(unittest.TestCase):
         result = subprocess.run(cmd + ['--suffix=-x/../../oops', 'source'], capture_output=True, text=True)
         self.assertNotEqual(result.returncode, 0)
 
+    def test_pre_repair_cli_without_layout(self):
+        # No layout key at all: pre-repair must still run, using the 8x8 source dimensions.
+        task = self.root / 'task.json'
+        entry = {'source': str(self.source), 'source_sha256': sha256_file(self.source), 'png': self.png.name,
+                 'pcraft': self.pcraft.name, 'protected': [{'id': 'logo', 'rect': [0, 0, 3, 3]}],
+                 'repairs': [{'id': 'cap', 'rect': [4, 4, 7, 7], 'effect_margin_px': 0}]}
+        task.write_text(json.dumps([entry]))
+        cmd = [sys.executable, str(SCRIPTS / 'check_layout.py'), str(task), str(self.root),
+               '--png', self.png.name, '--phase', 'pre-repair']
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('pre-repair geometry passed', result.stdout)
+        # A repair whose feather reaches the logo is reported.
+        entry['repairs'] = [{'id': 'cap', 'rect': [3, 3, 7, 7], 'effect_margin_px': 1}]
+        task.write_text(json.dumps([entry]))
+        self.assertNotEqual(subprocess.run(cmd, capture_output=True, text=True).returncode, 0)
+
     def test_stale_geometry_snapshot_cli(self):
         task = self.root / 'task.json'; snapshot = self.root / 'snapshot.json'
         entry = dict(self.entry, source_sha256=sha256_file(self.source), layout={'canvas': [8, 8]},
@@ -253,6 +270,18 @@ class Layout(unittest.TestCase):
     def test_repair_margin_protects_logo(self):
         self.entry['repairs'][0].update(rect=[82, 145, 110, 160], effect_margin_px=4)
         self.assertTrue(any('protected logo' in x for x in check(self.entry, phase='pre-repair')))
+
+    def test_pre_repair_without_layout_groups(self):
+        # A photo/single-headline item carries no layout.groups (even no layout); pre-repair
+        # takes the canvas from the source dimensions rather than requiring layout.canvas.
+        entry = {'source': '/x.jpg', 'protected': [{'id': 'logo', 'rect': [0, 140, 80, 200]}],
+                 'repairs': [{'id': 'old-title', 'rect': [150, 140, 200, 170], 'effect_margin_px': 2}]}
+        self.assertEqual(check(entry, phase='pre-repair', canvas_size=[400, 200]), [])
+        reaching = dict(entry, repairs=[{'id': 'edge', 'rect': [150, 140, 200, 170], 'effect_margin_px': 40}])
+        self.assertTrue(any('outside canvas' in x for x in check(reaching, phase='pre-repair', canvas_size=[400, 200])))
+        self.assertTrue(any('protected' in x for x in check(
+            dict(entry, repairs=[{'id': 'r', 'rect': [60, 150, 110, 170], 'effect_margin_px': 4}]),
+            phase='pre-repair', canvas_size=[400, 200])))
 
     def test_text_overlap_and_baseline(self):
         self.infos[1]['bounds'] = self.infos[0]['bounds'][:]

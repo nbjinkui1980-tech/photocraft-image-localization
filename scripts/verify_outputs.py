@@ -1,11 +1,45 @@
 #!/usr/bin/env python3
 import argparse
+import contextlib
 import hashlib
 import json
+import os
 import re
 import subprocess
+import threading
 import zipfile
 from pathlib import Path
+
+_scope = threading.local()
+
+
+@contextlib.contextmanager
+def verification_cache():
+    """Within one thread, reuse hashes/dimensions/archive checks for files whose stat is unchanged.
+
+    Any rewrite changes inode, size, mtime or ctime and forces recomputation, so the
+    before/after change checks keep working. Scope it to one item's checks.
+    """
+    previous = getattr(_scope, 'memo', None)
+    _scope.memo = {} if previous is None else previous
+    try:
+        yield
+    finally:
+        _scope.memo = previous
+
+
+def _memoized(kind, paths, compute):
+    memo = getattr(_scope, 'memo', None)
+    if memo is None:
+        return compute()
+    key = [kind]
+    for path in paths:
+        st = os.stat(path)
+        key.append((str(Path(path).resolve()), st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns))
+    key = tuple(key)
+    if key not in memo:
+        memo[key] = compute()
+    return memo[key]
 
 
 def exact_output(root, name):
@@ -18,11 +52,13 @@ def exact_output(root, name):
 
 
 def sha256_file(path):
-    digest = hashlib.sha256()
-    with path.open('rb') as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b''):
-            digest.update(chunk)
-    return digest.hexdigest()
+    def compute():
+        digest = hashlib.sha256()
+        with path.open('rb') as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+                digest.update(chunk)
+        return digest.hexdigest()
+    return _memoized('sha256', [path], compute)
 
 
 def pair_hashes(source, png, pcraft):
@@ -31,17 +67,24 @@ def pair_hashes(source, png, pcraft):
 
 
 def image_size(path):
-    output = subprocess.check_output(['sips', '-g', 'pixelWidth', '-g', 'pixelHeight', str(path)], text=True, stderr=subprocess.DEVNULL)
-    values = tuple(map(int, re.findall(r'(?:pixelWidth|pixelHeight): (\d+)', output)))
-    if len(values) != 2 or min(values) <= 0:
-        raise ValueError(f'invalid image dimensions: {path}')
-    return values
+    def compute():
+        output = subprocess.check_output(['sips', '-g', 'pixelWidth', '-g', 'pixelHeight', str(path)], text=True, stderr=subprocess.DEVNULL)
+        values = tuple(map(int, re.findall(r'(?:pixelWidth|pixelHeight): (\d+)', output)))
+        if len(values) != 2 or min(values) <= 0:
+            raise ValueError(f'invalid image dimensions: {path}')
+        return values
+    return _memoized('size', [path], compute)
 
 
 def verify_pair(source, png, pcraft):
     for path in (source, png, pcraft):
         if path.is_symlink() or not path.is_file() or path.stat().st_size == 0:
             raise ValueError(f'missing, empty, or symlink file: {path}')
+    # Failures raise and are never memoized; a success is reused only for unchanged files.
+    _memoized('pair', [source, png, pcraft], lambda: _verify_pair(source, png, pcraft))
+
+
+def _verify_pair(source, png, pcraft):
     expected = image_size(source)
     if image_size(png) != expected:
         raise ValueError('PNG dimensions differ from source')
