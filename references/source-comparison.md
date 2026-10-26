@@ -6,6 +6,8 @@ Use the existing task JSON. Retain the original as `source` and pin `source_sha2
 
 Protected and editable regions must not intersect. Everything outside editable regions is checked, even if it was not explicitly identified as protected. Do not derive editable areas from all observed differences or expand them simply to make a failed result pass. Revisit the approved layout if a genuine text reflow needs a new footprint; then rerun the comparison and affected visual review. Whole-image editable masks with no preserved pixels are rejected.
 
+Deriving a mask from observed differences is distinct from expanding one to hide a failure, and is permitted only as a verified starting point: when adapting an **existing** output whose edits are already authorized (its background repair and localized text are known, accepted changes), the source-vs-output difference footprint *is* that authorized edit set, so `repairmap.swift` + `cluster_rects.py` may generate the initial editable regions. The derivation is valid only if it is then proven, not assumed: the comparison must report zero unexpected pixels, nothing outside the mask may change, and the difference image plus full render must confirm the mask covers only text/repair, never product or artwork. If the gate fails, fix the layout or the derivation — never widen the mask to pass. See [batch-adaptation](batch-adaptation.md).
+
 Add this block to each task item:
 
 ```json

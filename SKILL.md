@@ -38,6 +38,10 @@ For multiple images or target languages, read [batch-production](references/batc
 
 Use `batch_verify.py` after candidate export and type-info collection to chain integrity, clean-base, plan, geometry and pixel checks. It does not perform MCP editing or visual approval. In production mode, bind candidate and reviewed plans with `candidate_plan_sha256` and `review_plan_sha256` as described in the reference. Both adaptation and production modes use the same delivery/cleanup standards.
 
+## Batch adaptation of existing outputs
+
+To bring an existing localized set (for example `v1` outputs) up to the delivery standard, or to apply batch wording/typography corrections on it, read [batch-adaptation](references/batch-adaptation.md). The background repair is already done, so the cost is the evidence pipeline, but two pitfalls dominate. First, classify each base with `classify_baseline.swift`: only a background preserved outside the text may keep the original source as the comparison baseline; a re-rendered gradient/photo makes the whole canvas differ and must be excluded or gated against the prior output instead. Second, derive editable regions from the change footprint with `repairmap.swift` + `cluster_rects.py` rather than hand-measuring, then require zero unexpected pixels and review the difference image. For poster/headline layouts an empty `layout.groups` skips per-layer type snapshots (the main per-image cost); keep snapshots for structured grids.
+
 ## Batch coordination
 
 Read [batch-review](references/batch-review.md) for repeated defects. Use multiple agents only when explicitly requested. Assign disjoint files and the same layout/terminology criteria. Concurrent PhotoCraft editing requires verified independent sessions. Otherwise parallelize analysis only and serialize all document select/edit/save sequences through one owner. Workers never delete shared old outputs.
@@ -58,5 +62,9 @@ Helpers in `scripts/`:
 - `verify_outputs.py`, `cleanup_versions.py`: integrity checks, fingerprints, and explicit-list cleanup (dry run by default).
 - `diff_scan.swift`: downsampled tone-difference hints on smooth backgrounds; not proof of a clean repair.
 - `find_dark.swift`: below-threshold pixel counts in a valid region. Zero matches cannot rule out faint, colored or light residual text; legitimate art can also match. No light-pixel mode is provided.
+- `classify_baseline.swift`: grid-sample a source and an existing output to decide whether the background is preserved (valid source baseline) or redesigned (exclude or gate against the prior output).
+- `repairmap.swift`: connected-component rects of the change footprint between two images, plus baseline statistics. Use to derive editable masks for batch adaptation.
+- `cluster_rects.py`: merge footprint fragments into per-text-group editable boxes; warns when a box nears whole-canvas coverage that the gate rejects.
+- `diffscan.swift`: list above-tolerance pixels outside the declared editable regions, to locate and diagnose comparison failures.
 
 Run `python3 scripts/test_workflow.py` for layout/cleanup regressions, `python3 scripts/test_source_comparison.py` for original-comparison/delivery regressions, and `python3 scripts/test_scans.py` for scan regressions when those helpers change. Image dimensions and Swift helpers currently require macOS. Do not equate script success with translation, visual, or cross-platform acceptance.
