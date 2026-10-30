@@ -8,6 +8,11 @@ the source, then duplicate per language) and from single-image adaptation. Here 
 base is an **existing localized output**, not the source, so the background repair is
 already done and the per-image cost is the evidence pipeline, not inpainting.
 
+For a new set, run `calibrate_adaptation.py PAIRS.json` first: it does the baseline
+classification and the tolerance/gap measurement below in one pass and reports
+recommended parameters. The sections that follow explain what it is doing and when to
+override it.
+
 ## Step 0 — classify each base: is the source baseline valid?
 
 The delivery gate compares the candidate against the **original source**. That is only
@@ -25,10 +30,19 @@ fraction of samples above tolerance:
 - **Preserved:** median ≈ 0 and only sparse (text-area) samples exceed tolerance. The
   source is a valid baseline; proceed.
 - **Redesigned:** high median and most samples differ (a re-lightened gradient measures
-  median 13 with ~77% of samples > 6). The source baseline is invalid. Exclude the
-  image, or gate it against the **prior output** (not the source) under an explicit
-  policy. Never declare the whole image editable to force a pass — the gate rejects
-  masks with no preserved pixels, and the mask would hide the redesigned background.
+  median 13 with ~77% of samples > 6). The source baseline is invalid for the existing
+  output. Decide *why* it was redesigned:
+  - **Unintentional repaint** (the localizer re-rendered the whole background instead of
+    preserving it): rebuild from the source in production mode — clean the source text
+    onto a verified clean base, localize on it, and gate against the source as usual.
+    This yields a better output than the repaint (the original background is preserved).
+    The rebuild uses the same delivery gate; the clean base is verified against the
+    source before text is added. See [batch-production](batch-production.md).
+  - **Intentional redesign** (the new background is the accepted design): keep it and
+    gate the new candidate against the prior output, not the source — point the task's
+    comparison reference at the prior output under an explicit, recorded policy.
+  Never declare the whole image editable to force a pass — the gate rejects masks with
+  no preserved pixels, and the mask would hide the redesigned background.
 
 ## Derive editable regions fast, then verify
 
@@ -66,10 +80,25 @@ the text/repair area by definition.
 
 ## Tolerance
 
-Calibrate per source with an **unedited PhotoCraft roundtrip** (open the source, export
-a PNG unchanged, compare): use the measured maximum, with a `tolerance_reason`. Do not
-copy a tolerance from another image — it is a property of that source's compression and
-color handling, not a global constant.
+The delivery gate's `channel_tolerance` must cover the diffuse background noise floor of
+the specific source set, which varies with JPEG compression and color handling. Do not
+copy it from another set. Measure it:
+
+- For a whole set at once, run `calibrate_adaptation.py PAIRS.json`. It classifies each
+  output, measures each preserved one's background floor with `background_floor.swift`
+  (strong text removed, the ringing halo dilated away, the residual background ceiling is
+  the floor), recommends `channel_tolerance` and the cluster `gap`/`margin` scaled to the
+  set's image width, and validates coverage on a sample. A `floor_max` far above
+  `floor_p999` is a thin hot tail — a suspected localized defect (repair seam, missed
+  mark), not diffuse noise; locate it with `outside_editable_scan.swift` and fix or
+  exclude it rather than raising the tolerance to hide it.
+- For one image under the policy's strictest reading, calibrate with an unedited
+  PhotoCraft roundtrip (open the source, export a PNG unchanged, compare): use the
+  measured maximum, with a `tolerance_reason`. For a preserved output the
+  `background_floor` ceiling equals this roundtrip floor, because the output's
+  background is the editor's own rendering of the source.
+
+Either way, record the value and the reason in the task entry.
 
 ## Layout snapshot is optional for simple layouts
 
